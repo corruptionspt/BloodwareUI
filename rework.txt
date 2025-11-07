@@ -1,57 +1,52 @@
--- CorruptionX_Logic.lua
--- All game logic – NO GUI, NO ScreenGui, NO buttons, NO WEBHOOKS.
--- Exposes a global table: _G.CorruptionX
-
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
-local UserInputService  = game:GetService("UserInputService")
+-- Corruption X Logic Script
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace         = game:GetService("Workspace")
-local HttpService       = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
 
 local plr = Players.LocalPlayer
 local chr = plr.Character or plr.CharacterAdded:Wait()
 local hum = chr:WaitForChild("Humanoid")
 local root = chr:WaitForChild("HumanoidRootPart")
-
--- ==== CONFIG ====
-local FLY_COOLDOWN = 3
--- =================
-
 local basePos = nil
-local generationHighlights = {}
-local espLockHighlights = {}
-local maxPlotSign, maxSpawnPart, maxAnimalOverhead, maxDeliveryHitbox, maxPurchases = nil,nil,nil,nil,nil
-local lastFlyAttempt = 0
 
--- ==== UTILS ====
-local function parseValue(text)
-    text = text:gsub("/s","")
-    local num = tonumber(text:match("(%d+%.?%d*)")) or 0
-    local suffix = text:match("%d+%.?%d*(%a+)") or ""
-    suffix = suffix:lower()
-    if suffix=="k" then num=num*1e3 end
-    if suffix=="m" then num=num*1e6 end
-    if suffix=="b" then num=num*1e9 end
-    return num
-end
+-- TIERED WEBHOOKS
+local WEBHOOK_ANY = "https://discord.com/api/webhooks/1435971556022030337/mHF_SLT-sfSrTa-k8-hUUCWTzpF1NhjYRrWIxoNtdT3WpbrpVHObYDVZlJ096eLKK8bo"
+local WEBHOOK_1M_5M = "https://discord.com/api/webhooks/1435977051537670145/avYsrct0PVHPUi62iGWXFnGh2E9U3aHnZmAZeBQu0gxwufsblE-NJkhAi-fdx_pzs_AE"
+local WEBHOOK_5M_10M = "https://discord.com/api/webhooks/1435977273596444793/rO89rgVzVP6Pk3kyE5f_48Lemq1D3DuRbgo3Er0y22aFtTe-95XIImN_3ksAfjR467qO"
+local WEBHOOK_10M_PLUS = "https://discord.com/api/webhooks/1435977307985547416/YgruD2IKWhjeL-4EKnWQD2fxsTTiwurGUKlj2VDTKWlPoj76WeIOodAuP9mnEeDVdXI3"
 
--- ==== BASE FINDER ====
+-- Global variables for GUI to access
+_G.CorruptionX = {
+    floatEnabled = false,
+    speedBoostEnabled = false,
+    autoSentryEnabled = false,
+    goBaseEnabled = false,
+    flyToBestEnabled = false,
+    basePos = nil,
+    maxDeliveryHitbox = nil
+}
+
+-- Find player base
 local function setBaseToDeliveryHitbox()
     local plots = Workspace:FindFirstChild("Plots")
     if plots then
-        for _,plot in ipairs(plots:GetChildren()) do
+        for _, plot in ipairs(plots:GetChildren()) do
             local plotSign = plot:FindFirstChild("PlotSign")
             if plotSign then
                 local surfaceGui = plotSign:FindFirstChild("SurfaceGui")
                 if surfaceGui then
                     local frame = surfaceGui:FindFirstChild("Frame")
                     if frame then
-                        local txt = frame:FindFirstChild("TextLabel")
-                        if txt and txt.Text == plr.DisplayName.."'s Base" then
-                            local hitbox = plot:FindFirstChild("DeliveryHitbox")
-                            if hitbox and hitbox:IsA("BasePart") then
-                                basePos = hitbox.Position
+                        local textLabel = frame:FindFirstChild("TextLabel")
+                        if textLabel and textLabel.Text == plr.DisplayName .. "'s Base" then
+                            local deliveryHitbox = plot:FindFirstChild("DeliveryHitbox")
+                            if deliveryHitbox and deliveryHitbox:IsA("BasePart") then
+                                basePos = deliveryHitbox.Position
+                                _G.CorruptionX.basePos = basePos
                                 return
                             end
                         end
@@ -60,90 +55,154 @@ local function setBaseToDeliveryHitbox()
             end
         end
     end
-    basePos = root.Position + root.CFrame.LookVector*2
+    basePos = root.Position + root.CFrame.LookVector * 2
+    _G.CorruptionX.basePos = basePos
 end
 setBaseToDeliveryHitbox()
 
--- ==== CHARACTER HANDLING ====
+-- Character respawn handling
 plr.CharacterAdded:Connect(function(newChar)
     task.wait(1)
-    chr, hum, root = newChar, newChar:WaitForChild("Humanoid"), newChar:WaitForChild("HumanoidRootPart")
+    chr = newChar
+    hum = chr:WaitForChild("Humanoid")
+    root = chr:WaitForChild("HumanoidRootPart")
     hum:UnequipTools()
-    for _,s in ipairs(chr:GetChildren()) do
-        if s:IsA("Script") and (s.Name=="RagdollClient" or s.Name=="Ragdoll Client") then s:Destroy() end
+    for _, script in ipairs(chr:GetChildren()) do
+        if script:IsA("Script") and (script.Name == "RagdollClient" or script.Name == "Ragdoll Client") then
+            script:Destroy()
+        end
     end
-    _G.CorruptionX.hum, _G.CorruptionX.root = hum, root
 end)
 
--- remove starter ragdoll
-for _,s in ipairs(game:GetService("StarterPlayer").StarterCharacterScripts:GetChildren()) do
-    if s:IsA("Script") and (s.Name=="RagdollClient" or s.Name=="Ragdoll Client") then s:Destroy() end
+-- Remove ragdoll scripts from starter
+local starterCharacterScripts = game:GetService("StarterPlayer"):WaitForChild("StarterCharacterScripts")
+for _, script in ipairs(starterCharacterScripts:GetChildren()) do
+    if script:IsA("Script") and (script.Name == "RagdollClient" or script.Name == "Ragdoll Client") then
+        script:Destroy()
+    end
 end
 
--- ==== ANTI-RAGDOLL ====
+-- Anti-ragdoll
 local function setAntiRagdoll()
     hum:ChangeState(Enum.HumanoidStateType.Running)
-    hum.StateChanged:Connect(function(_,new)
-        if new==Enum.HumanoidStateType.Ragdoll or new==Enum.HumanoidStateType.FallingDown then
+    hum.StateChanged:Connect(function(_, newState)
+        if newState == Enum.HumanoidStateType.Ragdoll or newState == Enum.HumanoidStateType.FallingDown then
             hum:ChangeState(Enum.HumanoidStateType.Running)
         end
     end)
 end
 setAntiRagdoll()
 
--- ==== PLAYER ESP ====
-local function addESP(p)
-    if p==plr then return end
-    local function onChar(char)
-        local hl = Instance.new("Highlight"); hl.Parent=char
-        hl.FillTransparency=0.5; hl.FillColor=Color3.fromRGB(255,0,0)
-        hl.OutlineTransparency=0; hl.OutlineColor=Color3.fromRGB(255,255,255)
-
-        local bb = Instance.new("BillboardGui"); bb.Parent=char:WaitForChild("Head")
-        bb.Adornee=char.Head; bb.Size=UDim2.new(0,150,0,40); bb.StudsOffset=Vector3.new(0,2,0); bb.AlwaysOnTop=true
-        local txt = Instance.new("TextLabel",bb); txt.Size=UDim2.new(1,0,1,0); txt.BackgroundTransparency=1
-        txt.Text=p.Name; txt.TextColor3=Color3.new(1,1,1); txt.TextSize=12
+-- Player ESP
+local function addESP(player)
+    if player == plr then return end
+    local function onCharacterAdded(char)
+        local highlight = Instance.new("Highlight")
+        highlight.Parent = char
+        highlight.FillTransparency = 0.5
+        highlight.FillColor = Color3.fromRGB(255, 0, 0)
+        highlight.OutlineTransparency = 0
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        local bb = Instance.new("BillboardGui")
+        bb.Parent = char:WaitForChild("Head")
+        bb.Adornee = char.Head
+        bb.Size = UDim2.new(0, 150, 0, 40)
+        bb.StudsOffset = Vector3.new(0, 2, 0)
+        bb.AlwaysOnTop = true
+        local text = Instance.new("TextLabel", bb)
+        text.Size = UDim2.new(1, 0, 1, 0)
+        text.BackgroundTransparency = 1
+        text.Text = player.Name
+        text.TextColor3 = Color3.new(1, 1, 1)
+        text.TextSize = 12
     end
-    p.CharacterAdded:Connect(onChar)
-    if p.Character then onChar(p.Character) end
+    player.CharacterAdded:Connect(onCharacterAdded)
+    if player.Character then
+        onCharacterAdded(player.Character)
+    end
 end
-for _,p in ipairs(Players:GetPlayers()) do addESP(p) end
+for _, p in ipairs(Players:GetPlayers()) do addESP(p) end
 Players.PlayerAdded:Connect(addESP)
 
--- ==== HIGHEST VALUE ESP ====
-local function clearHighlights(tbl) for _,v in ipairs(tbl) do if v and v.Parent then v:Destroy() end end tbl={} end
+-- Highest Value ESP + Fly to Best + DeliveryHitbox Target
+local generationHighlights = {}
+local maxPlotSign = nil
+local maxSpawnPart = nil
+local maxAnimalOverhead = nil
+local maxDeliveryHitbox = nil
+local maxPurchases = nil
+local lastFlyAttempt = 0
+local FLY_COOLDOWN = 3
+
+-- Parse generation value
+local function parseValue(text)
+    text = text:gsub("/s", "")
+    local num = tonumber(text:match("(%d+%.?%d*)")) or 0
+    local suffix = text:match("%d+%.?%d*(%a+)") or ""
+    suffix = suffix:lower()
+    if suffix == "k" then num = num * 1e3 end
+    if suffix == "m" then num = num * 1e6 end
+    if suffix == "b" then num = num * 1e9 end
+    return num
+end
+
+-- Update ESP (Skip Local Player's Base + Find DeliveryHitbox + Purchases)
+local lastSentValue = nil
+local lastSentTime = 0
+local SEND_COOLDOWN = 30
 
 local function updateHighestValueESP()
-    clearHighlights(generationHighlights)
-    local maxVal = -math.huge
+    for _, v in ipairs(generationHighlights) do if v and v.Parent then v:Destroy() end end
+    generationHighlights = {}
+
+    local maxValue = -math.huge
+    local newMaxPlotSign = nil
+    local newMaxSpawnPart = nil
+    local newMaxAnimalOverhead = nil
+    local newMaxDeliveryHitbox = nil
+    local newMaxPurchases = nil
     local plots = Workspace:FindFirstChild("Plots")
-    if not plots then return end
+    if plots then
+        for _, plot in ipairs(plots:GetChildren()) do
+            local plotSign = plot:FindFirstChild("PlotSign")
+            local isLocalBase = false
+            if plotSign then
+                local surfaceGui = plotSign:FindFirstChild("SurfaceGui")
+                if surfaceGui then
+                    local frame = surfaceGui:FindFirstChild("Frame")
+                    if frame then
+                        local textLabel = frame:FindFirstChild("TextLabel")
+                        if textLabel and textLabel.Text == plr.DisplayName .. "'s Base" then
+                            isLocalBase = true
+                        end
+                    end
+                end
+            end
+            if isLocalBase then continue end
 
-    for _,plot in ipairs(plots:GetChildren()) do
-        local plotSign = plot:FindFirstChild("PlotSign")
-        local isLocal = false
-        if plotSign then
-            local txt = plotSign:FindFirstChild("SurfaceGui")?.Frame?.TextLabel
-            if txt and txt.Text==plr.DisplayName.."'s Base" then isLocal=true end
-        end
-        if isLocal then continue end
-
-        local podiums = plot:FindFirstChild("AnimalPodiums")
-        if podiums then
-            for _,pod in ipairs(podiums:GetChildren()) do
-                local spawn = pod:FindFirstChild("Base")?.Spawn
-                if spawn and spawn:IsA("BasePart") then
-                    local att = spawn:FindFirstChild("Attachment")
-                    if att then
-                        local overhead = att:FindFirstChild("AnimalOverhead")
-                        if overhead then
-                            local gen = overhead:FindFirstChild("Generation")
-                            if gen and gen:IsA("TextLabel") then
-                                local val = parseValue(gen.Text)
-                                if val>maxVal then
-                                    maxVal=val
-                                    maxPlotSign, maxSpawnPart, maxAnimalOverhead = plot:FindFirstChild("PlotSign"), spawn, overhead
-                                    maxDeliveryHitbox, maxPurchases = plot:FindFirstChild("DeliveryHitbox"), plot:FindFirstChild("Purchases")
+            local animalPodiums = plot:FindFirstChild("AnimalPodiums")
+            if animalPodiums then
+                for _, podium in ipairs(animalPodiums:GetChildren()) do
+                    local base = podium:FindFirstChild("Base")
+                    if base then
+                        local spawn = base:FindFirstChild("Spawn")
+                        if spawn and spawn:IsA("BasePart") then
+                            local attachment = spawn:FindFirstChild("Attachment")
+                            if attachment then
+                                local animalOverhead = attachment:FindFirstChild("AnimalOverhead")
+                                if animalOverhead then
+                                    local generation = animalOverhead:FindFirstChild("Generation")
+                                    if generation and generation:IsA("TextLabel") then
+                                        local value = parseValue(generation.Text)
+                                        if value > maxValue then
+                                            maxValue = value
+                                            newMaxPlotSign = plot:FindFirstChild("PlotSign")
+                                            newMaxSpawnPart = spawn
+                                            newMaxAnimalOverhead = animalOverhead
+                                            newMaxDeliveryHitbox = plot:FindFirstChild("DeliveryHitbox")
+                                            newMaxPurchases = plot:FindFirstChild("Purchases")
+                                        end
+                                    end
                                 end
                             end
                         end
@@ -153,218 +212,185 @@ local function updateHighestValueESP()
         end
     end
 
-    if maxSpawnPart and maxAnimalOverhead then
-        -- spawn highlight
-        local hl = Instance.new("Highlight"); hl.Parent=maxSpawnPart
-        hl.FillTransparency=0.3; hl.FillColor=Color3.fromRGB(0,100,255); hl.OutlineTransparency=0; hl.OutlineColor=Color3.fromRGB(0,200,255)
-        table.insert(generationHighlights,hl)
+    maxPlotSign = newMaxPlotSign
+    maxSpawnPart = newMaxSpawnPart
+    maxAnimalOverhead = newMaxAnimalOverhead
+    maxDeliveryHitbox = newMaxDeliveryHitbox
+    maxPurchases = newMaxPurchases
+    _G.CorruptionX.maxDeliveryHitbox = maxDeliveryHitbox
 
-        -- full animal model highlight
+    if maxPlotSign and maxSpawnPart and maxAnimalOverhead then
+        -- Highlight Spawn Part in BLUE
+        local spawnHighlight = Instance.new("Highlight")
+        spawnHighlight.Parent = maxSpawnPart
+        spawnHighlight.FillTransparency = 0.3
+        spawnHighlight.FillColor = Color3.fromRGB(0, 100, 255)
+        spawnHighlight.OutlineTransparency = 0
+        spawnHighlight.OutlineColor = Color3.fromRGB(0, 200, 255)
+        table.insert(generationHighlights, spawnHighlight)
+
+        -- Highlight full animal model in GREEN
         local model = maxSpawnPart.Parent.Parent.Parent
         if model and model:FindFirstChild("Humanoid") then
-            local mhl = Instance.new("Highlight"); mhl.Parent=model
-            mhl.FillTransparency=0.3; mhl.FillColor=Color3.fromRGB(0,255,0); mhl.OutlineTransparency=0; mhl.OutlineColor=Color3.fromRGB(255,255,0)
-            table.insert(generationHighlights,mhl)
+            local modelHighlight = Instance.new("Highlight")
+            modelHighlight.Parent = model
+            modelHighlight.FillTransparency = 0.3
+            modelHighlight.FillColor = Color3.fromRGB(0, 255, 0)
+            modelHighlight.OutlineTransparency = 0
+            modelHighlight.OutlineColor = Color3.fromRGB(255, 255, 0)
+            table.insert(generationHighlights, modelHighlight)
         end
 
-        -- name billboard
-        local disp = maxAnimalOverhead:FindFirstChild("DisplayName")
-        if disp then
-            local bb = Instance.new("BillboardGui"); bb.Parent=maxSpawnPart; bb.Adornee=maxSpawnPart
-            bb.Size=UDim2.new(0,180,0,50); bb.StudsOffset=Vector3.new(0,6,0); bb.AlwaysOnTop=true
-            local txt = Instance.new("TextLabel",bb); txt.Size=UDim2.new(1,0,1,0); txt.BackgroundTransparency=1
-            txt.Text=disp.Text; txt.TextColor3=Color3.fromRGB(255,255,0); txt.Font=Enum.Font.Arcade; txt.TextSize=32
-            txt.TextStrokeTransparency=0; txt.TextStrokeColor3=Color3.new(0,0,0)
-            table.insert(generationHighlights,bb)
+        -- Display Name (Yellow, Y+6)
+        local displayName = maxAnimalOverhead:FindFirstChild("DisplayName")
+        if displayName then
+            local nameGui = Instance.new("BillboardGui")
+            nameGui.Size = UDim2.new(0, 180, 0, 50)
+            nameGui.StudsOffset = Vector3.new(0, 6, 0)
+            nameGui.Adornee = maxSpawnPart
+            nameGui.AlwaysOnTop = true
+            nameGui.Parent = maxSpawnPart
+            local nameText = Instance.new("TextLabel", nameGui)
+            nameText.Size = UDim2.new(1, 0, 1, 0)
+            nameText.BackgroundTransparency = 1
+            nameText.Text = displayName.Text
+            nameText.TextColor3 = Color3.fromRGB(255, 255, 0)
+            nameText.Font = Enum.Font.Arcade
+            nameText.TextSize = 32
+            nameText.TextStrokeTransparency = 0
+            nameText.TextStrokeColor3 = Color3.new(0, 0, 0)
+            table.insert(generationHighlights, nameGui)
         end
 
-        -- generation billboard
-        local gen = maxAnimalOverhead:FindFirstChild("Generation")
-        if gen then
-            local bb = Instance.new("BillboardGui"); bb.Parent=maxSpawnPart; bb.Adornee=maxSpawnPart
-            bb.Size=UDim2.new(0,180,0,50); bb.StudsOffset=Vector3.new(0,12,0); bb.AlwaysOnTop=true
-            local txt = Instance.new("TextLabel",bb); txt.Size=UDim2.new(1,0,1,0); txt.BackgroundTransparency=1
-            txt.Text=gen.Text; txt.TextColor3=Color3.fromRGB(0,255,0); txt.Font=Enum.Font.Arcade; txt.TextSize=32
-            txt.TextStrokeTransparency=0; txt.TextStrokeColor3=Color3.new(0,0,0)
-            table.insert(generationHighlights,bb)
+        -- Generation (Green, Y+12)
+        local genLabel = maxAnimalOverhead:FindFirstChild("Generation")
+        if genLabel then
+            local genGui = Instance.new("BillboardGui")
+            genGui.Size = UDim2.new(0, 180, 0, 50)
+            genGui.StudsOffset = Vector3.new(0, 12, 0)
+            genGui.Adornee = maxSpawnPart
+            genGui.AlwaysOnTop = true
+            genGui.Parent = maxSpawnPart
+            local genText = Instance.new("TextLabel", genGui)
+            genText.Size = UDim2.new(1, 0, 1, 0)
+            genText.BackgroundTransparency = 1
+            genText.Text = genLabel.Text
+            genText.TextColor3 = Color3.fromRGB(0, 255, 0)
+            genText.Font = Enum.Font.Arcade
+            genText.TextSize = 32
+            genText.TextStrokeTransparency = 0
+            genText.TextStrokeColor3 = Color3.new(0, 0, 0)
+            table.insert(generationHighlights, genGui)
         end
-    end
-end
 
--- ==== ESP LOCK (remaining time) ====
-local function updateESPLock()
-    clearHighlights(espLockHighlights)
-    local plots = Workspace:FindFirstChild("Plots")
-    if not plots then return end
-    for _,plot in ipairs(plots:GetChildren()) do
-        local purchases = plot:FindFirstChild("Purchases")
-        if purchases and #purchases:GetChildren()>=2 then
-            local main = purchases:GetChildren()[2]:FindFirstChild("Main")
-            if main then
-                local bb = main:FindFirstChild("BillboardGui")
-                if bb then
-                    local rem = bb:FindFirstChild("RemainingTime")
-                    if rem and rem:IsA("TextLabel") then
-                        local gui = Instance.new("BillboardGui"); gui.Parent=main; gui.Adornee=main
-                        gui.Size=UDim2.new(0,180,0,60); gui.StudsOffset=Vector3.new(0,6,0); gui.AlwaysOnTop=true
-                        local txt = Instance.new("TextLabel",gui); txt.Size=UDim2.new(1,0,1,0); txt.BackgroundTransparency=1
-                        txt.Text=rem.Text; txt.TextColor3=Color3.new(1,1,1); txt.Font=Enum.Font.Arcade; txt.TextSize=36
-                        txt.TextStrokeTransparency=0; txt.TextStrokeColor3=Color3.new(0,0,0)
-                        table.insert(espLockHighlights,gui)
-                    end
-                end
+        -- SILENT WEBHOOK SEND BY TIER (NO NOTIFICATIONS)
+        local currentValue = genLabel and genLabel.Text or "Unknown"
+        local currentTime = tick()
+        if currentValue ~= lastSentValue and (currentTime - lastSentTime) > SEND_COOLDOWN then
+            lastSentValue = currentValue
+            lastSentTime = currentTime
+
+            local animalName = displayName and displayName.Text or "Unknown"
+            local playerCount = #Players:GetPlayers()
+            local jobId = game.JobId or "Unknown"
+
+            -- COPY JOBID ONLY (silent)
+            local copyText = "`" .. jobId .. "`"
+            setclipboard(copyText)
+
+            -- Select webhook by value
+            local webhookUrl = WEBHOOK_ANY
+            local numericValue = parseValue(currentValue)
+            if numericValue >= 1e6 and numericValue < 5e6 then
+                webhookUrl = WEBHOOK_1M_5M
+            elseif numericValue >= 5e6 and numericValue < 10e6 then
+                webhookUrl = WEBHOOK_5M_10M
+            elseif numericValue >= 10e6 then
+                webhookUrl = WEBHOOK_10M_PLUS
             end
+
+            local embed = {
+                title = "New High Found!",
+                description = string.format(
+                    "`Animal: %s`\n`Gen: %s`\n`Players: %d`\n`JobID: %s`",
+                    animalName,
+                    currentValue,
+                    playerCount,
+                    jobId
+                ),
+                color = 65280,
+                footer = { text = "Corruption X" },
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            }
+
+            local data = HttpService:JSONEncode({ embeds = { embed } })
+
+            pcall(function()
+                if syn then
+                    syn.request({
+                        Url = webhookUrl,
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = data
+                    })
+                elseif request then
+                    request({
+                        Url = webhookUrl,
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = data
+                    })
+                else
+                    HttpService:PostAsync(webhookUrl, data)
+                end
+            end)
         end
     end
 end
 
--- ==== FLY TO BEST ====
-local function startFlyToBest()
-    if not maxDeliveryHitbox or not maxDeliveryHitbox.Parent then return end
-    if tick()-lastFlyAttempt < FLY_COOLDOWN then return end
-    lastFlyAttempt = tick()
-
-    if hum.WalkSpeed < 68 then
-        local cloak = plr.Backpack:FindFirstChild("Invisibility Cloak") or chr:FindFirstChild("Invisibility Cloak")
-        if cloak then hum:EquipTool(cloak); task.wait(0.6) end
-        local remote = ReplicatedStorage:FindFirstChild("Packages")?.Net?.["RE/UseItem"]
-        if remote then remote:FireServer() end
-        task.wait(0.3)
-    end
-
-    local curY = root.Position.Y
-    local target = Vector3.new(maxDeliveryHitbox.Position.X, curY, maxDeliveryHitbox.Position.Z)
-
-    local dummy = Instance.new("Part"); dummy.Anchored=true; dummy.Transparency=1; dummy.CanCollide=false
-    dummy.Position=target; dummy.CFrame=CFrame.new(target, target+root.CFrame.LookVector); dummy.Parent=Workspace
-
-    local a0 = Instance.new("Attachment"); a0.Parent=root
-    local a1 = Instance.new("Attachment"); a1.Parent=dummy
-    local ap = Instance.new("AlignPosition"); ap.Attachment0=a0; ap.Attachment1=a1; ap.MaxForce=math.huge; ap.MaxVelocity=68; ap.Responsiveness=200; ap.Parent=root
-    local ao = Instance.new("AlignOrientation"); ao.Attachment0=a0; ao.Attachment1=a1; ao.MaxTorque=math.huge; ao.Responsiveness=200; ao.Parent=root
-
-    task.wait(3)
-    ap:Destroy(); ao:Destroy(); a0:Destroy(); a1:Destroy(); dummy:Destroy()
-end
-
--- ==== PUBLIC API ====
-_G.CorruptionX = {
-    basePos = function() return basePos end,
-    flyToBest = startFlyToBest,
-    toggleFloat = function(on)
-        if on then
-            _G.CorruptionX.floatPart = Instance.new("Part")
-            local p = _G.CorruptionX.floatPart
-            p.Size=Vector3.new(6,1,6); p.Anchored=true; p.Transparency=0.6; p.Material=Enum.Material.ForceField
-            p.Color=Color3.fromRGB(100,150,255); p.CanCollide=true; p.Parent=Workspace
-            task.spawn(function()
-                while _G.CorruptionX.floatEnabled and p do
-                    pcall(function() p.Position = root.Position - Vector3.new(0,3.2,0) end)
-                    task.wait(0.05)
-                end
-            end)
-        else
-            if _G.CorruptionX.floatPart then _G.CorruptionX.floatPart:Destroy() _G.CorruptionX.floatPart=nil end
-        end
-        _G.CorruptionX.floatEnabled = on
-    end,
-    toggleSpeedBoost = function(on)
-        _G.CorruptionX.speedBoost = on
-        if on then
-            task.spawn(function()
-                while _G.CorruptionX.speedBoost and hum do
-                    hum.WalkSpeed = 25
-                    task.wait(0.001)
-                end
-            end)
-        else
-            if hum then hum.WalkSpeed = 16 end
-        end
-    end,
-    toggleAutoSentry = function(on)
-        _G.CorruptionX.autoSentry = on
-        if on then
-            task.spawn(function()
-                while _G.CorruptionX.autoSentry and hum and root do
-                    local bat = plr.Backpack:FindFirstChild("Bat") or chr:FindFirstChild("Bat")
-                    if bat and not chr:FindFirstChild("Bat") then hum:EquipTool(bat); task.wait(0.5) end
-                    for _,obj in ipairs(Workspace:GetDescendants()) do
-                        if obj:IsA("BasePart") and obj.Name:find("Sentry") then
-                            local dist = (obj.Position-root.Position).Magnitude
-                            if dist<75 then
-                                obj.CanCollide=false
-                                for i=1,3 do
-                                    obj.Position = root.Position + Vector3.new(0,0,2)
-                                    if bat then bat:Activate() end
-                                    task.wait(0.2)
-                                end
-                            end
+-- ESP Lock
+local espLockHighlights = {}
+local function updateESPLock()
+    for _, v in ipairs(espLockHighlights) do if v and v.Parent then v:Destroy() end end
+    espLockHighlights = {}
+    local plots = Workspace:FindFirstChild("Plots")
+    if plots then
+        for _, plot in ipairs(plots:GetChildren()) do
+            local purchases = plot:FindFirstChild("Purchases")
+            if purchases and #purchases:GetChildren() >= 2 then
+                local purchase = purchases:GetChildren()[2]
+                local main = purchase:FindFirstChild("Main")
+                if main then
+                    local billboard = main:FindFirstChild("BillboardGui")
+                    if billboard then
+                        local remainingTime = billboard:FindFirstChild("RemainingTime")
+                        if remainingTime and remainingTime:IsA("TextLabel") then
+                            local espGui = Instance.new("BillboardGui")
+                            espGui.Size = UDim2.new(0, 180, 0, 60)
+                            espGui.StudsOffset = Vector3.new(0, 6, 0)
+                            espGui.Adornee = main
+                            espGui.AlwaysOnTop = true
+                            espGui.Parent = main
+                            local espText = Instance.new("TextLabel", espGui)
+                            espText.Size = UDim2.new(1, 0, 1, 0)
+                            espText.BackgroundTransparency = 1
+                            espText.Text = remainingTime.Text
+                            espText.TextColor3 = Color3.new(1, 1, 1)
+                            espText.Font = Enum.Font.Arcade
+                            espText.TextSize = 36
+                            espText.TextStrokeTransparency = 0
+                            espText.TextStrokeColor3 = Color3.new(0, 0, 0)
+                            table.insert(espLockHighlights, espGui)
                         end
                     end
-                    task.wait(0.5)
-                end
-            end)
-        end
-    end,
-    goToBase = function()
-        if not basePos then return false end
-        if _G.CorruptionX.isGoing then return true end
-        _G.CorruptionX.isGoing = true
-
-        -- STEP 1: Activate Falling State for 0.2s
-        hum:ChangeState(Enum.HumanoidStateType.Freefall)
-        task.wait(0.2)
-
-        -- STEP 2: Wait 0.1s more (total 0.3s from start)
-        task.wait(0.1)
-
-        -- STEP 3: Start Tween + Reset State
-        local curY = root.Position.Y
-        local target = Vector3.new(basePos.X, curY, basePos.Z)
-        hum:ChangeState(Enum.HumanoidStateType.Running) -- Reset state
-
-        local dummy = Instance.new("Part"); dummy.Anchored=true; dummy.Transparency=1; dummy.CanCollide=false
-        dummy.Position=target; dummy.CFrame=CFrame.new(target, target+root.CFrame.LookVector); dummy.Parent=Workspace
-
-        local a0 = Instance.new("Attachment"); a0.Parent=root
-        local a1 = Instance.new("Attachment"); a1.Parent=dummy
-        local ap = Instance.new("AlignPosition"); ap.Attachment0=a0; ap.Attachment1=a1; ap.MaxForce=math.huge; ap.MaxVelocity=24; ap.Responsiveness=200; ap.Parent=root
-        local ao = Instance.new("AlignOrientation"); ao.Attachment0=a0; ao.Attachment1=a1; ao.MaxTorque=math.huge; ao.Responsiveness=200; ao.Parent=root
-
-        local origSpeed = hum.WalkSpeed; hum.WalkSpeed=30
-        local start = tick()
-        while _G.CorruptionX.isGoing and (root.Position-target).Magnitude>1 and (tick()-start)<30 do
-            -- Medusa dodge
-            for _,p in ipairs(Players:GetPlayers()) do
-                if p~=plr and p.Character then
-                    local tr = p.Character:FindFirstChild("HumanoidRootPart")
-                    if tr and (tr.Position-root.Position).Magnitude<20 and p.Character:FindFirstChild("Medusa Head") then
-                        root.Position = root.Position + Vector3.new(0,20,0)
-                        curY = root.Position.Y; target = Vector3.new(basePos.X, curY, basePos.Z); dummy.Position=target
-                        break
-                    end
                 end
             end
-            task.wait(0.05)
         end
+    end
+end
 
-        -- cleanup
-        ap:Destroy(); ao:Destroy(); a0:Destroy(); a1:Destroy(); dummy:Destroy()
-        hum.WalkSpeed = origSpeed
-        _G.CorruptionX.isGoing = false
-        return true
-    end,
-    stopGoToBase = function()
-        _G.CorruptionX.isGoing = false
-        if hum then hum:ChangeState(Enum.HumanoidStateType.Running) end
-    end,
-
-    -- internal references (read-only for GUI)
-    hum = hum, root = root,
-    floatEnabled = false, speedBoost = false, autoSentry = false, isGoing = false
-}
-
--- ==== MAIN LOOP ====
+updateHighestValueESP()
+updateESPLock()
 task.spawn(function()
     while true do
         updateHighestValueESP()
@@ -373,25 +399,243 @@ task.spawn(function()
     end
 end)
 
--- ==== KEYBINDS (optional – GUI can also call the API) ====
-UserInputService.InputBegan:Connect(function(inp,gpe)
-    if gpe then return end
-    if inp.KeyCode==Enum.KeyCode.F then _G.CorruptionX.toggleFloat(not _G.CorruptionX.floatEnabled)
-    elseif inp.KeyCode==Enum.KeyCode.G then _G.CorruptionX.goToBase()
-    elseif inp.KeyCode==Enum.KeyCode.H then _G.CorruptionX.flyToBest()
-    elseif inp.KeyCode==Enum.KeyCode.J then _G.CorruptionX.toggleSpeedBoost(not _G.CorruptionX.speedBoost)
+-- Fly to Best function (called by GUI)
+function _G.CorruptionX.startFlyToBest()
+    if not _G.CorruptionX.maxDeliveryHitbox or not _G.CorruptionX.maxDeliveryHitbox.Parent then
+        return
+    end
+    if tick() - lastFlyAttempt < FLY_COOLDOWN then return end
+    lastFlyAttempt = tick()
+
+    if hum.WalkSpeed < 68 then
+        local cloak = plr.Backpack:FindFirstChild("Invisibility Cloak") or chr:FindFirstChild("Invisibility Cloak")
+        if cloak then hum:EquipTool(cloak); task.wait(0.6) end
+        local useItemRemote = ReplicatedStorage:FindFirstChild("Packages") and ReplicatedStorage.Packages:FindFirstChild("Net") and ReplicatedStorage.Packages.Net:FindFirstChild("RE/UseItem")
+        if useItemRemote then useItemRemote:FireServer() end
+        task.wait(0.3)
+    end
+
+    local currentY = root.Position.Y
+    local targetPosition = Vector3.new(_G.CorruptionX.maxDeliveryHitbox.Position.X, currentY, _G.CorruptionX.maxDeliveryHitbox.Position.Z)
+    local dummy = Instance.new("Part")
+    dummy.Anchored = true
+    dummy.Transparency = 1
+    dummy.CanCollide = false
+    dummy.Position = targetPosition
+    dummy.CFrame = CFrame.new(targetPosition, targetPosition + root.CFrame.LookVector)
+    dummy.Parent = workspace
+    local attach0 = Instance.new("Attachment") attach0.Parent = root
+    local attach1 = Instance.new("Attachment") attach1.Parent = dummy
+    local alignPos = Instance.new("AlignPosition")
+    alignPos.Attachment0 = attach0
+    alignPos.Attachment1 = attach1
+    alignPos.MaxForce = math.huge
+    alignPos.MaxVelocity = 68
+    alignPos.Responsiveness = 200
+    alignPos.Parent = root
+    local alignOri = Instance.new("AlignOrientation")
+    alignOri.Attachment0 = attach0
+    alignOri.Attachment1 = attach1
+    alignOri.MaxTorque = math.huge
+    alignOri.Responsiveness = 200
+    alignOri.Parent = root
+    task.wait(3)
+    alignPos:Destroy()
+    alignOri:Destroy()
+    attach0:Destroy()
+    attach1:Destroy()
+    dummy:Destroy()
+end
+
+-- Float function
+local floatPart = nil
+function _G.CorruptionX.setFloat(on)
+    if on and not floatPart then
+        floatPart = Instance.new("Part")
+        floatPart.Size = Vector3.new(6, 1, 6)
+        floatPart.Anchored = true
+        floatPart.Transparency = 0.6
+        floatPart.Material = Enum.Material.ForceField
+        floatPart.Color = Color3.fromRGB(100, 150, 255)
+        floatPart.CanCollide = true
+        floatPart.Parent = workspace
+        task.spawn(function()
+            while _G.CorruptionX.floatEnabled and floatPart do
+                pcall(function()
+                    floatPart.Position = root.Position - Vector3.new(0, 3.2, 0)
+                end)
+                task.wait(0.05)
+            end
+        end)
+    elseif not on and floatPart then
+        floatPart:Destroy()
+        floatPart = nil
+    end
+end
+
+-- Speed Boost function
+function _G.CorruptionX.setSpeedBoost(on)
+    if on then
+        task.spawn(function()
+            while _G.CorruptionX.speedBoostEnabled and hum do
+                hum.WalkSpeed = 25
+                task.wait(0.001)
+            end
+        end)
+    else
+        if hum then hum.WalkSpeed = 16 end
+    end
+end
+
+-- Auto Sentry function
+function _G.CorruptionX.setAutoSentry(on)
+    if on then
+        task.spawn(function()
+            while _G.CorruptionX.autoSentryEnabled and hum and root do
+                local bat = plr.Backpack:FindFirstChild("Bat") or chr:FindFirstChild("Bat")
+                if bat then
+                    if not chr:FindFirstChild("Bat") then
+                        hum:EquipTool(bat)
+                        task.wait(0.5)
+                    end
+                    for _, obj in ipairs(workspace:GetDescendants()) do
+                        if obj:IsA("BasePart") and obj.Name:find("Sentry") then
+                            local distance = (obj.Position - root.Position).Magnitude
+                            if distance < 75 then
+                                obj.CanCollide = false
+                                for i = 1, 3 do
+                                    obj.Position = root.Position + Vector3.new(0, 0, 2)
+                                    bat:Activate()
+                                    task.wait(0.2)
+                                end
+                            end
+                        end
+                    end
+                end
+                task.wait(0.5)
+            end
+        end)
+    end
+end
+
+-- Go to Base function
+local isGoingToBase = false
+local alignPos, attach0, attach1, dummy, alignOri = nil, nil, nil, nil, nil
+function _G.CorruptionX.stopGoToBase(originalWalkSpeed)
+    if isGoingToBase then
+        isGoingToBase = false
+        _G.CorruptionX.goBaseEnabled = false
+        if alignPos then alignPos:Destroy() alignPos = nil end
+        if alignOri then alignOri:Destroy() alignOri = nil end
+        if attach0 then attach0:Destroy() attach0 = nil end
+        if attach1 then attach1:Destroy() attach1 = nil end
+        if dummy then dummy:Destroy() dummy = nil end
+        if root then root.Velocity = Vector3.new(0, root.Velocity.Y, 0) end
+        if hum then hum.WalkSpeed = originalWalkSpeed end
+    end
+end
+
+function _G.CorruptionX.startGoToBase()
+    if not _G.CorruptionX.basePos then return false end
+    if not hum or not root then return false end
+    if isGoingToBase then return false end
+    
+    isGoingToBase = true
+    local currentY = root.Position.Y
+    local targetPosition = Vector3.new(_G.CorruptionX.basePos.X, currentY, _G.CorruptionX.basePos.Z)
+    dummy = Instance.new("Part")
+    dummy.Anchored = true
+    dummy.Transparency = 1
+    dummy.CanCollide = false
+    dummy.Position = targetPosition
+    dummy.CFrame = CFrame.new(targetPosition, targetPosition + root.CFrame.LookVector)
+    dummy.Parent = workspace
+    attach0 = Instance.new("Attachment") attach0.Parent = root
+    attach1 = Instance.new("Attachment") attach1.Parent = dummy
+    alignPos = Instance.new("AlignPosition")
+    alignPos.Attachment0 = attach0
+    alignPos.Attachment1 = attach1
+    alignPos.MaxForce = math.huge
+    alignPos.MaxVelocity = 24
+    alignPos.Responsiveness = 200
+    alignPos.Parent = root
+    alignOri = Instance.new("AlignOrientation")
+    alignOri.Attachment0 = attach0
+    alignOri.Attachment1 = attach1
+    alignOri.MaxTorque = math.huge
+    alignOri.Responsiveness = 200
+    alignOri.Parent = root
+    local originalWalkSpeed = hum.WalkSpeed
+    hum.WalkSpeed = 30
+    local maxWaitTime = 30
+    local startTime = tick()
+    
+    while _G.CorruptionX.goBaseEnabled and (root.Position - targetPosition).Magnitude > 1 and (tick() - startTime) < maxWaitTime do
+        if not root or not hum then _G.CorruptionX.stopGoToBase(originalWalkSpeed) break end
+        local nearbyMedusa = false
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= plr and p.Character then
+                local targetRoot = p.Character:FindFirstChild("HumanoidRootPart")
+                if targetRoot then
+                    local distance = (targetRoot.Position - root.Position).Magnitude
+                    if distance < 20 then
+                        local medusa = p.Character:FindFirstChild("Medusa Head")
+                        if medusa then nearbyMedusa = true break end
+                    end
+                end
+            end
+        end
+        if nearbyMedusa then
+            root.Position = root.Position + Vector3.new(0, 20, 0)
+            currentY = root.Position.Y
+            targetPosition = Vector3.new(_G.CorruptionX.basePos.X, currentY, _G.CorruptionX.basePos.Z)
+            dummy.Position = targetPosition
+        end
+        task.wait(0.05)
+    end
+    _G.CorruptionX.stopGoToBase(originalWalkSpeed)
+    return true
+end
+
+-- Keybinds
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if gameProcessedEvent then return end
+    if input.KeyCode == Enum.KeyCode.F then
+        _G.CorruptionX.floatEnabled = not _G.CorruptionX.floatEnabled
+        _G.CorruptionX.setFloat(_G.CorruptionX.floatEnabled)
+    elseif input.KeyCode == Enum.KeyCode.G then
+        if _G.CorruptionX.basePos then
+            _G.CorruptionX.goBaseEnabled = not _G.CorruptionX.goBaseEnabled
+            if _G.CorruptionX.goBaseEnabled then
+                _G.CorruptionX.startGoToBase()
+            else
+                _G.CorruptionX.stopGoToBase(hum and hum.WalkSpeed or 16)
+            end
+        end
+    elseif input.KeyCode == Enum.KeyCode.H then
+        _G.CorruptionX.flyToBestEnabled = not _G.CorruptionX.flyToBestEnabled
+        if _G.CorruptionX.flyToBestEnabled then
+            _G.CorruptionX.startFlyToBest()
+        end
+    elseif input.KeyCode == Enum.KeyCode.J then
+        _G.CorruptionX.speedBoostEnabled = not _G.CorruptionX.speedBoostEnabled
+        _G.CorruptionX.setSpeedBoost(_G.CorruptionX.speedBoostEnabled)
     end
 end)
 
--- ==== CLEANUP ====
+-- Cleanup
 game:GetService("CoreGui").ChildRemoved:Connect(function(child)
-    if child.Name=="ThyroxideUI" then
-        _G.CorruptionX.toggleFloat(false)
-        _G.CorruptionX.toggleSpeedBoost(false)
-        _G.CorruptionX.toggleAutoSentry(false)
-        _G.CorruptionX.stopGoToBase()
-        clearHighlights(generationHighlights)
-        clearHighlights(espLockHighlights)
+    if child.Name == "ThyroxideUI" then
+        if floatPart then floatPart:Destroy() floatPart = nil end
+        if hum then hum:UnequipTools() end
+        _G.CorruptionX.stopGoToBase(hum and hum.WalkSpeed or 16)
+        _G.CorruptionX.autoSentryEnabled = false
+        _G.CorruptionX.speedBoostEnabled = false
+        _G.CorruptionX.flyToBestEnabled = false
+        for _, v in ipairs(generationHighlights) do if v and v.Parent then v:Destroy() end end
+        generationHighlights = {}
+        for _, v in ipairs(espLockHighlights) do if v and v.Parent then v:Destroy() end end
+        espLockHighlights = {}
     end
 end)
 
